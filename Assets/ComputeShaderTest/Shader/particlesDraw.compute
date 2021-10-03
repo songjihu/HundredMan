@@ -1,0 +1,85 @@
+﻿#pragma kernel CSMain
+#include "SimplexNoise3D.cginc" 
+struct Particle
+{
+	float3 pos;     //起始位置
+	float3 newPos;      //更新位置
+};
+
+RWStructuredBuffer<Particle> _ParticleBuffer;
+
+float _deltaTime;
+float _radius_r;
+float _radius_R;
+float _length_h;
+float _randomDegree;
+
+float nrand(float2 uv)
+{
+	return frac(sin(dot(uv, float2(12.9898, 78.233))) * 43758.5453);
+}
+uint rng_state;
+
+uint rand_xorshift()
+{
+	rng_state ^= (rng_state << 13);
+	rng_state ^= (rng_state >> 17);
+	rng_state ^= (rng_state << 5);
+	return rng_state;
+}
+
+float3 snoiseVec3(float3 x) {
+
+	float s = snoise(x);
+	float s1 = snoise(float3(x.y - 19.1, x.z + 33.4, x.x + 47.2));
+	float s2 = snoise(float3(x.z + 74.2, x.x - 124.5, x.y + 99.4));
+	float3 c = float3(s, s1, s2);
+	return c;
+}
+
+float3 curlNoise(float3 p) {
+
+	const float e = .01;
+	float3 dx = float3(e, 0.0, 0.0);
+	float3 dy = float3(0.0, e, 0.0);
+	float3 dz = float3(0.0, 0.0, e);
+
+	float3 p_x0 = snoiseVec3(p - dx);
+	float3 p_x1 = snoiseVec3(p + dx);
+	float3 p_y0 = snoiseVec3(p - dy);
+	float3 p_y1 = snoiseVec3(p + dy);
+	float3 p_z0 = snoiseVec3(p - dz);
+	float3 p_z1 = snoiseVec3(p + dz);
+
+	float x = p_y1.z - p_y0.z - p_z1.y + p_z0.y;
+	float y = p_z1.x - p_z0.x - p_x1.z + p_x0.z;
+	float z = p_x1.y - p_x0.y - p_y1.x + p_y0.x;
+
+	const float divisor = 1.0 / (2.0 * e);
+	return normalize(float3(x, y, z) * divisor);
+}
+
+[numthreads(256, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+	float3 position = _ParticleBuffer[id.x].pos;
+
+	_ParticleBuffer[id.x].pos += curlNoise(position) * 0.2;		//随机位置
+
+	//_ParticleBuffer[id.x].pos.x += _deltaTime * 0.1;		//位移
+
+	//形状为圆台的范围
+	float posDis = sqrt((_ParticleBuffer[id.x].pos.y * _ParticleBuffer[id.x].pos.y) + (_ParticleBuffer[id.x].pos.z * _ParticleBuffer[id.x].pos.z));
+	float rangeDis = ((_radius_R - _radius_r) / _length_h) * _ParticleBuffer[id.x].pos.x;
+	float multNum = rangeDis - posDis;
+
+	if (multNum < 0)
+	{
+		_ParticleBuffer[id.x].pos = float3(_ParticleBuffer[id.x].pos.x, rangeDis * sin(_randomDegree), rangeDis * cos(_randomDegree));
+	}
+
+	if (_ParticleBuffer[id.x].pos.x > _length_h)
+	{
+		_ParticleBuffer[id.x].pos = float3(1, 0.1 * sin(_randomDegree), 0.1 * cos(_randomDegree));
+	}
+}
